@@ -13,7 +13,15 @@ from datetime import date
 # ---- DATABASE CONNECTION ------------------------------------
 # This reads your database credentials from environment variables.
 # You never hardcode passwords into code.
-conn = psycopg2.connect(os.environ["DATABASE_URL"])
+import urllib.parse
+db_url = urllib.parse.urlparse(os.environ["DATABASE_URL"])
+conn = psycopg2.connect(
+    host=db_url.hostname,
+    port=db_url.port,
+    database=db_url.path[1:],
+    user=db_url.username,
+    password=urllib.parse.unquote(db_url.password)
+)
 cur = conn.cursor()
 
 # ---- HOSPITAL RECORD ----------------------------------------
