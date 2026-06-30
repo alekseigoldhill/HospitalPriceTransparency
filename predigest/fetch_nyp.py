@@ -79,7 +79,8 @@ if data:
 inserted = 0
 skipped = 0
 
-charge_items = data[0].get('standard_charge_information', [])
+hospital_data = data[0] if isinstance(data, list) else data
+charge_items = hospital_data.get('standard_charge_information', [])
 print(f"Found {len(charge_items)} charge items to process.")
 
 for item in charge_items:
