@@ -70,6 +70,8 @@ with zipfile.ZipFile(io.BytesIO(response.content)) as z:
         data = json.load(f)
 
 print(f"File downloaded. Processing records...")
+if data:
+    print(f"First record sample: {list(data[0].keys()) if isinstance(data, list) else list(data.keys())}")
 
 # ---- PROCESS PRICES -----------------------------------------
 inserted = 0
