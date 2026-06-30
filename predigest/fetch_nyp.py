@@ -74,21 +74,27 @@ if data:
     print(f"First record sample: {list(data[0].keys()) if isinstance(data, list) else list(data.keys())}")
 
 # ---- PROCESS PRICES -----------------------------------------
+# NYP uses the new CMS 2024 format.
+# Pricing data lives inside data[0]['standard_charge_information']
 inserted = 0
 skipped = 0
 
-for item in data:
-    try:
-        # Get procedure details
-        code = item.get("code", "")
-        code_type = item.get("code_type", "")
-        description = item.get("description", "")
+charge_items = data[0].get('standard_charge_information', [])
+print(f"Found {len(charge_items)} charge items to process.")
 
+for item in charge_items:
+    try:
+        description = item.get('description', '')
         if not description:
             skipped += 1
             continue
 
-        # Insert procedure if it doesn't exist yet
+        # Get procedure code from code_information list
+        code_info = item.get('code_information', [])
+        code = code_info[0].get('code', '') if code_info else ''
+        code_type = code_info[0].get('type', '') if code_info else ''
+
+        # Insert procedure
         cur.execute("""
             INSERT INTO procedures (code, code_type, description)
             VALUES (%s, %s, %s)
@@ -102,55 +108,69 @@ for item in data:
         else:
             cur.execute("""
                 SELECT id FROM procedures
-                WHERE code = %s AND code_type = %s
-            """, (code, code_type))
-            procedure_id = cur.fetchone()[0]
-
-        # Insert cash price
-        cash_price = item.get("cash_price")
-        if cash_price:
-            cur.execute("""
-                INSERT INTO prices
-                (hospital_id, procedure_id, payer_id, price_type, price,
-                 source_file_url, recorded_at)
-                VALUES (%s, %s, NULL, 'cash', %s, %s, %s)
-            """, (hospital_id, procedure_id, float(cash_price), url, date.today()))
-
-        # Insert negotiated rates by payer
-        payer_rates = item.get("payer_specific_negotiated_rates", [])
-        for rate in payer_rates:
-            payer_name = rate.get("payer_name", "")
-            plan_name = rate.get("plan_name", "")
-            price = rate.get("negotiated_rate")
-
-            if not payer_name or not price:
+                WHERE description = %s
+            """, (description,))
+            row = cur.fetchone()
+            if not row:
+                skipped += 1
                 continue
+            procedure_id = row[0]
 
-            # Insert payer if new
-            cur.execute("""
-                INSERT INTO payers (name, plan_name)
-                VALUES (%s, %s)
-                ON CONFLICT DO NOTHING
-                RETURNING id
-            """, (payer_name, plan_name))
+        # Process each standard charge
+        for charge in item.get('standard_charges', []):
 
-            payer_result = cur.fetchone()
-            if payer_result:
-                payer_id = payer_result[0]
-            else:
+            # Cash price
+            cash_price = charge.get('discounted_cash')
+            if cash_price:
                 cur.execute("""
-                    SELECT id FROM payers
-                    WHERE name = %s AND plan_name = %s
-                """, (payer_name, plan_name))
-                payer_id = cur.fetchone()[0]
+                    INSERT INTO prices
+                    (hospital_id, procedure_id, payer_id, price_type, price,
+                     source_file_url, recorded_at)
+                    VALUES (%s, %s, NULL, 'cash', %s, %s, %s)
+                """, (hospital_id, procedure_id, float(cash_price), url, date.today()))
 
-            # Insert negotiated price
-            cur.execute("""
-                INSERT INTO prices
-                (hospital_id, procedure_id, payer_id, price_type, price,
-                 source_file_url, recorded_at)
-                VALUES (%s, %s, %s, 'negotiated', %s, %s, %s)
-            """, (hospital_id, procedure_id, payer_id, float(price), url, date.today()))
+            # Chargemaster (gross) price
+            gross = charge.get('gross_charge')
+            if gross:
+                cur.execute("""
+                    INSERT INTO prices
+                    (hospital_id, procedure_id, payer_id, price_type, price,
+                     source_file_url, recorded_at)
+                    VALUES (%s, %s, NULL, 'chargemaster', %s, %s, %s)
+                """, (hospital_id, procedure_id, float(gross), url, date.today()))
+
+            # Negotiated rates by payer
+            for payer_info in charge.get('payers_information', []):
+                payer_name = payer_info.get('payer_name', '')
+                plan_name = payer_info.get('plan_name', '')
+                price = payer_info.get('standard_charge_dollar')
+
+                if not payer_name or not price:
+                    continue
+
+                cur.execute("""
+                    INSERT INTO payers (name, plan_name)
+                    VALUES (%s, %s)
+                    ON CONFLICT DO NOTHING
+                    RETURNING id
+                """, (payer_name, plan_name))
+
+                payer_result = cur.fetchone()
+                if payer_result:
+                    payer_id = payer_result[0]
+                else:
+                    cur.execute("""
+                        SELECT id FROM payers
+                        WHERE name = %s AND plan_name = %s
+                    """, (payer_name, plan_name))
+                    payer_id = cur.fetchone()[0]
+
+                cur.execute("""
+                    INSERT INTO prices
+                    (hospital_id, procedure_id, payer_id, price_type, price,
+                     source_file_url, recorded_at)
+                    VALUES (%s, %s, %s, 'negotiated', %s, %s, %s)
+                """, (hospital_id, procedure_id, payer_id, float(price), url, date.today()))
 
         inserted += 1
 
@@ -164,4 +184,4 @@ conn.commit()
 cur.close()
 conn.close()
 
-print(f"Done. {inserted} procedures inserted, {skipped} skipped.")
+print(f"Done. {inserted} procedures inserted, {skipped} skipped.")d.")
