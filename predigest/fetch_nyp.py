@@ -17,7 +17,7 @@ import urllib.parse
 from datetime import date
 
 # ---- SETTINGS -----------------------------------------------
-TEST_LIMIT = 500  # Change to None to process the full file
+TEST_LIMIT = None  # Change to None to process the full file
 
 # ---- DATABASE CONNECTION ------------------------------------
 db_url = urllib.parse.urlparse(os.environ["DATABASE_URL"])
