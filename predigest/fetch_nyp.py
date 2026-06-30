@@ -26,7 +26,11 @@ conn = psycopg2.connect(
     port=db_url.port,
     database=db_url.path[1:],
     user=db_url.username,
-    password=urllib.parse.unquote(db_url.password)
+    password=urllib.parse.unquote(db_url.password),
+    keepalives=1,
+    keepalives_idle=30,
+    keepalives_interval=10,
+    keepalives_count=5
 )
 cur = conn.cursor()
 
