@@ -56,9 +56,18 @@ print(f"Hospital ID: {hospital_id}")
 # by federal law to publish.
 print("Downloading NewYork-Presbyterian pricing file...")
 
-url = "https://www.nyp.org/patientbill/NYP_standardcharges.json"
+import zipfile
+import io
+
+url = "https://nyp.widen.net/content/hisgjrgpuk/original/133957095_NewYork-Presbyterian-Hospital_standardcharges.json.zip?u=n8xzey&download=true"
+print("Downloading NewYork-Presbyterian pricing file...")
 response = requests.get(url, timeout=120)
-data = response.json()
+
+# The file is a ZIP — extract the JSON inside it
+with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+    json_filename = [f for f in z.namelist() if f.endswith('.json')][0]
+    with z.open(json_filename) as f:
+        data = json.load(f)
 
 print(f"File downloaded. Processing records...")
 
