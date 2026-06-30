@@ -1,0 +1,39 @@
+# ============================================================
+# fetch_prices.yml
+# Automatically runs the hospital pricing scripts on a schedule
+# and whenever you manually trigger it.
+# ============================================================
+
+name: Fetch Hospital Prices
+
+on:
+  # Run automatically every Sunday at midnight
+  schedule:
+    - cron: '0 0 * * 0'
+  # Also allow you to run it manually from GitHub
+  workflow_dispatch:
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Download your code from GitHub
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      # Step 2: Set up Python
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Step 3: Install the required libraries
+      - name: Install dependencies
+        run: pip install requests psycopg2-binary
+
+      # Step 4: Run the NewYork-Presbyterian script
+      - name: Fetch NewYork-Presbyterian prices
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python predigest/fetch_nyp.py
