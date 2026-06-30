@@ -184,4 +184,4 @@ conn.commit()
 cur.close()
 conn.close()
 
-print(f"Done. {inserted} procedures inserted, {skipped} skipped.")d.")
+print(f"Done. {inserted} procedures inserted, {skipped} skipped.")
