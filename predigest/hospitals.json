@@ -1,0 +1,30 @@
+[
+  {
+    "name": "The Mount Sinai Hospital",
+    "state": "NY",
+    "city": "New York",
+    "url": "https://www.mountsinai.org/files/mrf/131624096_mount-sinai-hospital_standardcharges.json",
+    "format": "json"
+  },
+  {
+    "name": "Mount Sinai Brooklyn",
+    "state": "NY",
+    "city": "Brooklyn",
+    "url": "https://www.mountsinai.org/files/mrf/135564934_mount-sinai-brooklyn_standardcharges.json",
+    "format": "json"
+  },
+  {
+    "name": "Mount Sinai Queens",
+    "state": "NY",
+    "city": "Queens",
+    "url": "https://www.mountsinai.org/files/mrf/131624096_mount-sinai-queens_standardcharges.json",
+    "format": "json"
+  },
+  {
+    "name": "Mount Sinai Morningside",
+    "state": "NY",
+    "city": "New York",
+    "url": "https://www.mountsinai.org/files/mrf/132997301_mount-sinai-morningside_standardcharges.json",
+    "format": "json"
+  }
+]
