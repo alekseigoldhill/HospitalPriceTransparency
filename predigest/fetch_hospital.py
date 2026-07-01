@@ -166,8 +166,9 @@ def process_hospital(config):
         if batch:
             psycopg2.extras.execute_values(cur, """
                 INSERT INTO prices
-                  (hospital_id, procedure_id, payer_id, price_type, price)
-                VALUES %s
+                      (hospital_id, procedure_id, payer_id, price_type, price)
+                    VALUES %s
+                    ON CONFLICT DO NOTHING
             """, batch)
             total += len(batch)
             conn.commit()
