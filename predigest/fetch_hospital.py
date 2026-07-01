@@ -1,10 +1,8 @@
 import os, json, zipfile, io, requests, psycopg2, psycopg2.extras
 from urllib.parse import urlparse, unquote
 from datetime import datetime, timezone
-
 BATCH_SIZE = 10000
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-
 def get_conn():
     p = urlparse(os.environ["DATABASE_URL"])
     return psycopg2.connect(
@@ -14,7 +12,6 @@ def get_conn():
         keepalives=1, keepalives_idle=30,
         keepalives_interval=10, keepalives_count=5,
     )
-
 def download_file(url, fmt):
     print(f"  Downloading ({fmt})...")
     r = requests.get(url, timeout=300, stream=True)
@@ -37,7 +34,6 @@ def download_file(url, fmt):
     charges = hospital_data.get("standard_charge_information", [])
     print(f"  Loaded {len(charges):,} charge items")
     return hospital_data, charges
-
 def upsert_hospital(cur, hospital_data, config):
     name = config["name"]
     filename = config["url"].split("/")[-1].split("?")[0]
@@ -55,7 +51,6 @@ def upsert_hospital(cur, hospital_data, config):
     hospital_id = cur.fetchone()[0]
     print(f"  Hospital: {name} (ID {hospital_id})")
     return hospital_id
-
 def collect_entities(charges):
     procedures = {}
     payers = set()
@@ -76,7 +71,6 @@ def collect_entities(charges):
                     payers.add((pname, plan))
     print(f"  {len(procedures):,} procedures | {len(payers):,} payers")
     return procedures, payers
-
 def bulk_insert_procedures(cur, procedures):
     rows = [(desc, code, code_type) for desc, (code, code_type) in procedures.items()]
     psycopg2.extras.execute_values(cur, """
@@ -85,7 +79,6 @@ def bulk_insert_procedures(cur, procedures):
     """, rows)
     cur.execute("SELECT description, id FROM procedures")
     return {desc: pid for desc, pid in cur.fetchall()}
-
 def bulk_insert_payers(cur, payers):
     psycopg2.extras.execute_values(cur, """
         INSERT INTO payers (name, plan_name) VALUES %s
@@ -93,8 +86,8 @@ def bulk_insert_payers(cur, payers):
     """, list(payers))
     cur.execute("SELECT name, plan_name, id FROM payers")
     return {(name, plan): pid for name, plan, pid in cur.fetchall()}
-
 def build_price_rows(charges, hospital_id, proc_cache, payer_cache):
+    seen = set()
     for item in charges:
         desc = item.get("description", "").strip()
         if not desc or desc not in proc_cache:
@@ -102,15 +95,16 @@ def build_price_rows(charges, hospital_id, proc_cache, payer_cache):
         proc_id = proc_cache[desc]
         std_charges = item.get("standard_charges", [])
         top = std_charges[0] if std_charges else {}
-        cash = top.get("discounted_cash") or top.get("gross_charge")
-        if cash is not None:
-            yield (hospital_id, proc_id, None, "cash", cash)
-        min_neg = top.get("minimum")
-        if min_neg is not None:
-            yield (hospital_id, proc_id, None, "min", min_neg)
-        max_neg = top.get("maximum")
-        if max_neg is not None:
-            yield (hospital_id, proc_id, None, "max", max_neg)
+        for price_type, val in [
+            ("cash", top.get("discounted_cash") or top.get("gross_charge")),
+            ("min", top.get("minimum")),
+            ("max", top.get("maximum")),
+        ]:
+            if val is not None:
+                key = (proc_id, None, price_type)
+                if key not in seen:
+                    seen.add(key)
+                    yield (hospital_id, proc_id, None, price_type, val)
         for sc in std_charges:
             for pi in sc.get("payers_information", []):
                 pname = pi.get("payer_name", "").strip()
@@ -123,8 +117,10 @@ def build_price_rows(charges, hospital_id, proc_cache, payer_cache):
                     continue
                 payer_id = payer_cache.get((pname, plan))
                 if payer_id:
-                    yield (hospital_id, proc_id, payer_id, "negotiated", rate)
-
+                    key = (proc_id, payer_id, "negotiated")
+                    if key not in seen:
+                        seen.add(key)
+                        yield (hospital_id, proc_id, payer_id, "negotiated", rate)
 def process_hospital(config):
     print(f"\n{'='*60}")
     print(f"Processing: {config['name']}")
@@ -155,6 +151,7 @@ def process_hospital(config):
                     INSERT INTO prices
                       (hospital_id, procedure_id, payer_id, price_type, price)
                     VALUES %s
+                    ON CONFLICT DO NOTHING
                 """, batch)
                 total += len(batch)
                 batch = []
@@ -166,9 +163,9 @@ def process_hospital(config):
         if batch:
             psycopg2.extras.execute_values(cur, """
                 INSERT INTO prices
-                      (hospital_id, procedure_id, payer_id, price_type, price)
-                    VALUES %s
-                    ON CONFLICT DO NOTHING
+                  (hospital_id, procedure_id, payer_id, price_type, price)
+                VALUES %s
+                ON CONFLICT DO NOTHING
             """, batch)
             total += len(batch)
             conn.commit()
@@ -190,7 +187,6 @@ def process_hospital(config):
     finally:
         cur.close()
         conn.close()
-
 def main():
     hospitals_file = os.path.join(SCRIPT_DIR, "hospitals.json")
     with open(hospitals_file) as f:
@@ -207,6 +203,5 @@ def main():
         print(f"\nFailed: {failed}")
     else:
         print("\nAll hospitals processed successfully.")
-
 if __name__ == "__main__":
     main()
