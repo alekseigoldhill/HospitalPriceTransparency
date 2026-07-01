@@ -39,7 +39,7 @@ def download_file(url, fmt):
     return hospital_data, charges
 
 def upsert_hospital(cur, hospital_data, config):
-   name = config["name"]
+    name = config["name"]
     filename = config["url"].split("/")[-1].split("?")[0]
     for suffix in ["_standardcharges.json.zip", "_standardcharges.json", ".json.zip", ".json"]:
         if filename.endswith(suffix):
