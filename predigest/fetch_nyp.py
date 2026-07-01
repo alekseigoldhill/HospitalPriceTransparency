@@ -1,179 +1,171 @@
-# ============================================================
-# fetch_nyp.py
-# Downloads and processes NewYork-Presbyterian pricing data.
-# Uses batch inserts for speed.
-# TEST_LIMIT controls how many procedures to process.
-# Set to None to process the entire file.
-# ============================================================
+import os, json, zipfile, io, requests, psycopg2, psycopg2.extras
+from urllib.parse import urlparse, unquote
+from datetime import datetime, timezone
 
-import requests
-import json
-import psycopg2
-import psycopg2.extras
-import os
-import zipfile
-import io
-import urllib.parse
-from datetime import date
-
-# ---- SETTINGS -----------------------------------------------
-TEST_LIMIT = None  # Change to None to process the full file
-
-# ---- DATABASE CONNECTION ------------------------------------
-db_url = urllib.parse.urlparse(os.environ["DATABASE_URL"])
-conn = psycopg2.connect(
-    host=db_url.hostname,
-    port=db_url.port,
-    database=db_url.path[1:],
-    user=db_url.username,
-    password=urllib.parse.unquote(db_url.password),
-    keepalives=1,
-    keepalives_idle=30,
-    keepalives_interval=10,
-    keepalives_count=5
+NYP_URL = (
+    "https://nyp.widen.net/content/hisgjrgpuk/original/"
+    "133957095_NewYork-Presbyterian-Hospital_standardcharges.json.zip"
+    "?u=n8xzey&download=true"
 )
-cur = conn.cursor()
+BATCH_SIZE = 5000
+TEST_LIMIT = None
 
-# ---- HOSPITAL RECORD ----------------------------------------
-cur.execute("""
-    INSERT INTO hospitals (name, cms_id, city, borough, state, source_url, last_updated)
-    VALUES (%s, %s, %s, %s, %s, %s, %s)
-    ON CONFLICT (cms_id) DO UPDATE SET last_updated = EXCLUDED.last_updated
-    RETURNING id
-""", (
-    "NewYork-Presbyterian Hospital",
-    "330101",
-    "New York",
-    "Manhattan",
-    "NY",
-    "https://nyp.widen.net/content/hisgjrgpuk/original/133957095_NewYork-Presbyterian-Hospital_standardcharges.json.zip?u=n8xzey&download=true",
-    date.today()
-))
-hospital_id = cur.fetchone()[0]
-print(f"Hospital ID: {hospital_id}")
+def get_conn():
+    p = urlparse(os.environ["DATABASE_URL"])
+    return psycopg2.connect(
+        host=p.hostname, port=p.port or 5432,
+        dbname=p.path.lstrip("/"), user=p.username,
+        password=unquote(p.password), sslmode="require",
+        keepalives=1, keepalives_idle=30,
+        keepalives_interval=10, keepalives_count=5,
+    )
 
-# ---- DOWNLOAD PRICING FILE ----------------------------------
-url = "https://nyp.widen.net/content/hisgjrgpuk/original/133957095_NewYork-Presbyterian-Hospital_standardcharges.json.zip?u=n8xzey&download=true"
-print("Downloading NewYork-Presbyterian pricing file...")
-response = requests.get(url, timeout=120)
+def download_and_parse(url):
+    print("Downloading NYP file...")
+    r = requests.get(url, timeout=300)
+    r.raise_for_status()
+    print(f"Downloaded {len(r.content)/1_000_000:.1f} MB")
+    with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+        with z.open(z.namelist()[0]) as f:
+            data = json.load(f)
+    hospital_data = data[0] if isinstance(data, list) else data
+    charges = hospital_data.get("standard_charge_information", [])
+    print(f"Found {len(charges):,} charge items")
+    return hospital_data, charges
 
-with zipfile.ZipFile(io.BytesIO(response.content)) as z:
-    json_filename = [f for f in z.namelist() if f.endswith('.json')][0]
-    with z.open(json_filename) as f:
-        data = json.load(f)
+def upsert_hospital(cur, hospital_data):
+    name = hospital_data.get("hospital_name", "New York-Presbyterian Hospital")
+    locations = hospital_data.get("hospital_location", [{}])
+    cms_id = str(locations[0].get("hospital_id", "330101")) if isinstance(locations, list) else "330101"
+    cur.execute("""
+        INSERT INTO hospitals (name, cms_id, state, city)
+        VALUES (%s, %s, 'NY', 'New York')
+        ON CONFLICT (cms_id) DO UPDATE SET name = EXCLUDED.name
+        RETURNING id
+    """, (name, cms_id))
+    hospital_id = cur.fetchone()[0]
+    print(f"Hospital: {name} (ID {hospital_id})")
+    return hospital_id
 
-print("File downloaded. Processing records...")
+def load_caches(cur):
+    print("Loading caches...")
+    cur.execute("SELECT description, id FROM procedures")
+    proc_cache = {r[0]: r[1] for r in cur.fetchall()}
+    cur.execute("SELECT name, plan_name, id FROM payers")
+    payer_cache = {(r[0], r[1]): r[2] for r in cur.fetchall()}
+    print(f"  {len(proc_cache):,} procedures | {len(payer_cache):,} payers cached")
+    return proc_cache, payer_cache
 
-# ---- GET CHARGE ITEMS ---------------------------------------
-hospital_data = data[0] if isinstance(data, list) else data
-charge_items = hospital_data.get('standard_charge_information', [])
-print(f"Found {len(charge_items)} total charge items.")
+def get_or_create_procedure(cur, cache, desc, code, code_type):
+    if desc in cache:
+        return cache[desc]
+    cur.execute("""
+        INSERT INTO procedures (description, code, code_type)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (description) DO UPDATE SET code = EXCLUDED.code
+        RETURNING id
+    """, (desc, code, code_type))
+    pid = cur.fetchone()[0]
+    cache[desc] = pid
+    return pid
 
-if TEST_LIMIT:
-    charge_items = charge_items[:TEST_LIMIT]
-    print(f"TEST MODE: Processing first {TEST_LIMIT} items only.")
+def get_or_create_payer(cur, cache, name, plan):
+    key = (name, plan)
+    if key in cache:
+        return cache[key]
+    cur.execute("""
+        INSERT INTO payers (name, plan_name)
+        VALUES (%s, %s)
+        ON CONFLICT (name, plan_name) DO UPDATE SET name = EXCLUDED.name
+        RETURNING id
+    """, (name, plan))
+    pid = cur.fetchone()[0]
+    cache[key] = pid
+    return pid
 
-# ---- PROCESS IN BATCHES -------------------------------------
-inserted = 0
-skipped = 0
-price_batch = []
-BATCH_SIZE = 500
+def main():
+    start = datetime.now(timezone.utc)
+    conn = get_conn()
+    cur = conn.cursor()
 
-for item in charge_items:
-    try:
-        description = item.get('description', '')
-        if not description:
-            skipped += 1
+    hospital_data, charges = download_and_parse(NYP_URL)
+    hospital_id = upsert_hospital(cur, hospital_data)
+    conn.commit()
+
+    proc_cache, payer_cache = load_caches(cur)
+
+    if TEST_LIMIT:
+        charges = charges[:TEST_LIMIT]
+        print(f"TEST MODE: {TEST_LIMIT} items")
+
+    cur.execute("""
+        INSERT INTO import_log (hospital_id, status, procedures_total, started_at)
+        VALUES (%s, 'running', %s, %s) RETURNING id
+    """, (hospital_id, len(charges), start))
+    log_id = cur.fetchone()[0]
+    conn.commit()
+
+    batch, total = [], 0
+
+    for i, item in enumerate(charges):
+        desc = item.get("description", "").strip()
+        if not desc:
             continue
 
-        code_info = item.get('code_information', [])
-        code = code_info[0].get('code', '') if code_info else ''
-        code_type = code_info[0].get('type', '') if code_info else ''
+        codes = item.get("code_information", [])
+        code = codes[0].get("code", "") if codes else ""
+        code_type = codes[0].get("type", "") if codes else ""
+        proc_id = get_or_create_procedure(cur, proc_cache, desc, code, code_type)
 
-        # Insert procedure
-        cur.execute("""
-            INSERT INTO procedures (code, code_type, description)
-            VALUES (%s, %s, %s)
-            ON CONFLICT DO NOTHING
-            RETURNING id
-        """, (code, code_type, description))
+        std_charges = item.get("standard_charges", [])
+        top = std_charges[0] if std_charges else {}
+        cash = top.get("discounted_cash") or top.get("gross_charge")
+        min_neg = top.get("minimum")
+        max_neg = top.get("maximum")
 
-        proc_result = cur.fetchone()
-        if proc_result:
-            procedure_id = proc_result[0]
-        else:
-            cur.execute("""
-                SELECT id FROM procedures WHERE description = %s
-            """, (description,))
-            row = cur.fetchone()
-            if not row:
-                skipped += 1
-                continue
-            procedure_id = row[0]
+        batch.append((hospital_id, proc_id, None, cash, None, min_neg, max_neg))
 
-        for charge in item.get('standard_charges', []):
-
-            # Cash price
-            cash_price = charge.get('discounted_cash')
-            if cash_price:
-                price_batch.append((hospital_id, procedure_id, None, 'cash', float(cash_price), url, date.today()))
-
-            # Chargemaster price
-            gross = charge.get('gross_charge')
-            if gross:
-                price_batch.append((hospital_id, procedure_id, None, 'chargemaster', float(gross), url, date.today()))
-
-            # Negotiated rates
-            for payer_info in charge.get('payers_information', []):
-                payer_name = payer_info.get('payer_name', '')
-                plan_name = payer_info.get('plan_name', '')
-                price = payer_info.get('standard_charge_dollar')
-
-                if not payer_name or not price:
+        for sc in std_charges:
+            for pi in sc.get("payers_information", []):
+                pname = pi.get("payer_name", "").strip()
+                plan = pi.get("plan_name", "").strip() or None
+                rate = pi.get("negotiated_rate") or pi.get("negotiated_dollar")
+                if not pname or rate is None:
                     continue
+                payer_id = get_or_create_payer(cur, payer_cache, pname, plan)
+                batch.append((hospital_id, proc_id, payer_id, None, rate, None, None))
 
-                cur.execute("""
-                    INSERT INTO payers (name, plan_name)
-                    VALUES (%s, %s)
-                    ON CONFLICT DO NOTHING
-                    RETURNING id
-                """, (payer_name, plan_name))
-
-                payer_result = cur.fetchone()
-                if payer_result:
-                    payer_id = payer_result[0]
-                else:
-                    cur.execute("""
-                        SELECT id FROM payers WHERE name = %s AND plan_name = %s
-                    """, (payer_name, plan_name))
-                    payer_id = cur.fetchone()[0]
-
-                price_batch.append((hospital_id, procedure_id, payer_id, 'negotiated', float(price), url, date.today()))
-
-        # Flush batch every 500 rows
-        if len(price_batch) >= BATCH_SIZE:
+        if len(batch) >= BATCH_SIZE:
             psycopg2.extras.execute_values(cur, """
-                INSERT INTO prices (hospital_id, procedure_id, payer_id, price_type, price, source_file_url, recorded_at)
+                INSERT INTO prices
+                  (hospital_id, procedure_id, payer_id, cash_price, negotiated_rate, min_negotiated, max_negotiated)
                 VALUES %s
-            """, price_batch)
-            price_batch = []
+            """, batch)
+            total += len(batch)
+            batch = []
+            conn.commit()
+            elapsed = int((datetime.now(timezone.utc) - start).total_seconds() // 60)
+            print(f"  [{elapsed} min] {i+1:,}/{len(charges):,} items | {total:,} rows inserted")
+            cur.execute("UPDATE import_log SET procedures_done=%s WHERE id=%s", (i+1, log_id))
+            conn.commit()
 
-        inserted += 1
+    if batch:
+        psycopg2.extras.execute_values(cur, """
+            INSERT INTO prices
+              (hospital_id, procedure_id, payer_id, cash_price, negotiated_rate, min_negotiated, max_negotiated)
+            VALUES %s
+        """, batch)
+        total += len(batch)
+        conn.commit()
 
-    except Exception as e:
-        print(f"Skipped record due to error: {e}")
-        skipped += 1
-        continue
+    elapsed = int((datetime.now(timezone.utc) - start).total_seconds() // 60)
+    cur.execute("""
+        UPDATE import_log SET status='done', procedures_done=%s, finished_at=%s WHERE id=%s
+    """, (len(charges), datetime.now(timezone.utc), log_id))
+    conn.commit()
+    print(f"\nDone! {total:,} rows in {elapsed} minutes.")
+    cur.close()
+    conn.close()
 
-# Insert any remaining rows
-if price_batch:
-    psycopg2.extras.execute_values(cur, """
-        INSERT INTO prices (hospital_id, procedure_id, payer_id, price_type, price, source_file_url, recorded_at)
-        VALUES %s
-    """, price_batch)
-
-conn.commit()
-cur.close()
-conn.close()
-
-print(f"Done. {inserted} procedures inserted, {skipped} skipped.")
+if __name__ == "__main__":
+    main()
