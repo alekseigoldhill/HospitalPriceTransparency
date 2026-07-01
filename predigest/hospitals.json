@@ -1,12 +1,5 @@
 [
   {
-    "name": "New York-Presbyterian Hospital",
-    "state": "NY",
-    "city": "New York",
-    "url": "https://nyp.widen.net/content/hisgjrgpuk/original/133957095_NewYork-Presbyterian-Hospital_standardcharges.json.zip?u=n8xzey&download=true",
-    "format": "json_zip"
-  },
-  {
     "name": "The Mount Sinai Hospital",
     "state": "NY",
     "city": "New York",
