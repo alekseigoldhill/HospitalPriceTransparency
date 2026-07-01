@@ -1,8 +1,3 @@
-# ============================================================
-# fetch_prices.yml
-# Automatically runs the hospital pricing scripts on a schedule
-# and whenever you manually trigger it.
-# ============================================================
 name: Fetch Hospital Prices
 on:
   schedule:
