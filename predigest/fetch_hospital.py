@@ -39,11 +39,13 @@ def download_file(url, fmt):
     return hospital_data, charges
 
 def upsert_hospital(cur, hospital_data, config):
-    name = hospital_data.get("hospital_name", config["name"])
-    locations = hospital_data.get("hospital_location", [{}])
-    cms_id = str(locations[0].get("hospital_id", "")) if isinstance(locations, list) else ""
-    if not cms_id:
-        cms_id = config["url"].split("/")[-1].split("_")[0]
+   name = config["name"]
+    filename = config["url"].split("/")[-1].split("?")[0]
+    for suffix in ["_standardcharges.json.zip", "_standardcharges.json", ".json.zip", ".json"]:
+        if filename.endswith(suffix):
+            filename = filename[:-len(suffix)]
+            break
+    cms_id = filename
     cur.execute("""
         INSERT INTO hospitals (name, cms_id, state, city)
         VALUES (%s, %s, %s, %s)
