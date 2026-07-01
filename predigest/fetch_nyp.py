@@ -121,7 +121,10 @@ def build_price_rows(charges, hospital_id, proc_cache, payer_cache):
             for pi in sc.get("payers_information", []):
                 pname = pi.get("payer_name", "").strip()
                 plan = pi.get("plan_name", "").strip() or None
-                rate = pi.get("negotiated_rate") or pi.get("negotiated_dollar")
+                rate = (pi.get("negotiated_dollar") or
+                        pi.get("negotiated_rate") or
+                        pi.get("standard_charge_dollar") or
+                        pi.get("estimated_amount"))
                 if not pname or rate is None:
                     continue
                 payer_id = payer_cache.get((pname, plan))
