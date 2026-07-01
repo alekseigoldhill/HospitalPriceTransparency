@@ -35,13 +35,6 @@
     "format": "json"
   },
 {
-  "name": "NewYork-Presbyterian Hudson Valley Hospital",
-  "state": "NY",
-  "city": "Cortlandt Manor",
-  "url": "https://nyp.widen.net/content/gtk2b9ya33/original/131740120_NewYork-Presbyterian-Hudson-Valley_standardcharges.json.zip?u=n8xzey&download=true",
-  "format": "json_zip"
-}
-{
   "name": "NewYork-Presbyterian Queens",
   "state": "NY",
   "city": "Flushing",
