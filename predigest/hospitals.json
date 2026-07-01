@@ -33,5 +33,19 @@
     "city": "New York",
     "url": "https://www.mountsinai.org/files/mrf/132997301_mount-sinai-morningside_standardcharges.json",
     "format": "json"
-  }
+  },
+{
+  "name": "NewYork-Presbyterian Hudson Valley Hospital",
+  "state": "NY",
+  "city": "Cortlandt Manor",
+  "url": "https://nyp.widen.net/content/gtk2b9ya33/original/131740120_NewYork-Presbyterian-Hudson-Valley_standardcharges.json.zip?u=n8xzey&download=true",
+  "format": "json_zip"
+},
+{
+  "name": "NewYork-Presbyterian Queens",
+  "state": "NY",
+  "city": "Flushing",
+  "url": "https://nyp.widen.net/content/nfagsjimrt/original/111839362_NewYork-Presbyterian-Queens_standardcharges.json.zip?u=n8xzey&download=true",
+  "format": "json_zip"
+}
 ]
