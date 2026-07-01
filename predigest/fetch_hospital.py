@@ -1,4 +1,4 @@
-import os, json, zipfile, io, requests, psycopg2, psycopg2.extras
+import os, json, zipfile, io, requests, psycopg2, psycopg2.extras, time
 from urllib.parse import urlparse, unquote
 from datetime import datetime, timezone
 BATCH_SIZE = 10000
@@ -14,16 +14,25 @@ def get_conn():
     )
 def download_file(url, fmt):
     print(f"  Downloading ({fmt})...")
-    r = requests.get(url, timeout=300, stream=True)
-    r.raise_for_status()
-    buf = io.BytesIO()
-    downloaded = 0
-    for chunk in r.iter_content(chunk_size=1024 * 1024):
-        buf.write(chunk)
-        downloaded += len(chunk)
-        print(f"\r    {downloaded / 1_000_000:.1f} MB", end="", flush=True)
-    print()
-    buf.seek(0)
+    for attempt in range(3):
+        try:
+            r = requests.get(url, timeout=(30, 120), stream=True)
+            r.raise_for_status()
+            buf = io.BytesIO()
+            downloaded = 0
+            for chunk in r.iter_content(chunk_size=1024 * 1024):
+                buf.write(chunk)
+                downloaded += len(chunk)
+                print(f"\r    {downloaded / 1_000_000:.1f} MB", end="", flush=True)
+            print()
+            buf.seek(0)
+            break
+        except Exception as e:
+            if attempt < 2:
+                print(f"\n  Download failed (attempt {attempt+1}/3): {e}, retrying in 15s...")
+                time.sleep(15)
+            else:
+                raise
     if fmt == "json_zip":
         with zipfile.ZipFile(buf) as z:
             with z.open(z.namelist()[0]) as f:
