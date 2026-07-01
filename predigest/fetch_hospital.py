@@ -14,7 +14,9 @@ def get_conn():
     )
 def download_file(url, fmt):
     print(f"  Downloading ({fmt})...")
-    headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+    headers = {}
+    if "widen.net" in url:
+        headers["User-Agent"] = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     for attempt in range(3):
         try:
             r = requests.get(url, headers=headers, timeout=(30, 120), stream=True)
